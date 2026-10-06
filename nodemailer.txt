@@ -1,0 +1,37 @@
+1 Go to google api console
+  create new project or select existing project
+2
+  Enable Gmail API
+    Go to library and search for Gmail API and enable it
+    
+3 Create Oauth2 credentials
+  go to credentials page
+  click on create credentials
+  select Oauth client ID
+  select the application type to Web application
+  set name 
+  set authorized redirect URI 
+    http://localhost:5000/oauth2callback   and https://developers.google.com/oauthplayground (or your application url) after creating you will get your clientId and client secret (keep it safe)
+
+=============NOTE========================
+  Auth conscent screen me jo hum ny google ko info di ha wo abi development mode ke liya ha jub hum is ko production mode me ly kr jayn gy to humy google ko kuch or information deni hon gi for verification.
+
+
+
+  4. Generating the Refresh token using Oauth 2.O playground
+    in the top right corner click on the gear icon
+    under the Oauth 2.0 endpoints, select your own Oauth credentials
+    ENter clientId and client secret obtained from google api console
+    select the access type to offline to obtain refresh token 
+
+
+5   Configuration are used to send email to users
+
+  1 .env
+    CLIENT_ID=
+    CLIENT_SECRET=
+    REFRESH_TOKEN=
+    EMAIL_USER=
+
+
+account routes -> controller 
