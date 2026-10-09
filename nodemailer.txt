@@ -35,3 +35,49 @@
 
 
 account routes -> controller 
+
+============================= Proper Transaction system ====================
+ Jab bhi humy kisi kisam ki Transaction krni hoti ha to us ke step hota han
+ Step 1
+ Create Transaction
+  -> {
+    from - account A
+    to   - account B
+    amount - 100
+    idempotencyKey - xyzstring
+    status - pending
+  }
+
+  jab Transaction create ho gi to us ka status initial me pending ho ga.
+  Transaction ke successful hona pr is ka status complete otherwise failure
+  Jab ik Transaction create hoti ha to us ke 2 Ledgers create hota han
+  Ledger system ki help sy hum manage krta han kis account sy kitna amount aya tha and kis account me kitna amount gya tha.
+  Ledgers ik trha ki history hoti ha jo ke sender or receiver ke darmiyan hoti ha
+  Ik Ledger create hota ha us ka jisna amount send krni hoti ha
+  Ik Ledger create hota ha us ka jis ko amount send ki jati ha
+  ik Transaction ke 4 stepes han. Agr koi bhi step perform nahi hota like Transaction create na ho, amount send na ho , amount receive na ho and Transaction ka status complete na ho to Transaction fail ho jati ha
+
+  Ledger for deposit Account A
+  {
+    Account - A ki details
+    amount - 100
+    Type - debit
+  }
+  Ledger for deposit Account B
+  {
+    Account - B ki details
+    amount - 100
+    Type - credit
+  }
+
+  How to manage each user balance?
+  ik ledger ki help sy hum balance manage krta han, ik user ke all credits ko add krta han and all debits ko add krta han then credits me sy debits ko minus kr deta han.
+
+
+
+  Note to create Transaction
+  sab sy pehla From Account ab user jo account no enter kr rha ha wo us ka apna hi hona chahya
+  account no valid bhi hona chahya.
+  account no duplicate nhi hona chahya.
+  account no exist bhi krna chahya.
+  

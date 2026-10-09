@@ -73,4 +73,36 @@ async function sendRegistrationEmail(useremail, name) {
     await sendMail(useremail, subject, text, html);
 }
 
+const sendTransactionEmail = async (userEmail,name, amount, toAccount)=>{
+    const subject = "Transaction successfull"
+    const text = `
+    Dear ${name},
+
+    This is confirmation that your transaction of ${amount} to account ${toAccount} has been successfully processed.
+
+    Transaction ID: ${transaction.id}
+    Date: ${transaction.date}
+    Amount: ${transaction.amount}
+    Status: ${transaction.status}
+
+    If you did not authorize this transaction, please contact our support team immediately.
+
+    Thank you,
+    Banking System Team
+    `;
+    const html = `
+    <h1>Transaction Confirmation</h1>
+    <p>Dear ${name},</p>
+    <p>This is confirmation that your transaction of ${amount} to account ${toAccount} has been successfully processed.</p>
+    <p>Transaction ID: ${transaction.id}</p>
+    <p>Date: ${transaction.date}</p>
+    <p>Amount: ${transaction.amount}</p>
+    <p>Status: ${transaction.status}</p>
+    <p>If you did not authorize this transaction, please contact our support team immediately.</p>
+    <p>Thank you,</p>
+    <p>The Banking System Team</p>
+    `;
+    await sendMail(userEmail, subject, text, html);
+}
+
 export default sendRegistrationEmail;
