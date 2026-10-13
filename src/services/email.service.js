@@ -73,7 +73,7 @@ async function sendRegistrationEmail(useremail, name) {
     await sendMail(useremail, subject, text, html);
 }
 
-const sendTransactionEmail = async (userEmail,name, amount, toAccount)=>{
+export const sendTransactionEmail = async (userEmail,name, amount, toAccount)=>{
     const subject = "Transaction successfull"
     const text = `
     Dear ${name},

@@ -19,10 +19,10 @@ export const getAccountController = async(req, res) => {
         const user = req.user;
         const account = await accountModel.find({
             user: user._id
-        }).populate("user", "_id")
-
+        })
+        
         return res.status(200).json({ account })
     } catch (error) {
-        return res.status(500).json({})
+        return res.status(500).json({message:"Account not found", error})
     }
 }

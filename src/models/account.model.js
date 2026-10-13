@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import ledgerModel from "./ledger.model.js";
 
 const accountSchema = new mongoose.Schema({
     user:{
@@ -24,6 +25,51 @@ const accountSchema = new mongoose.Schema({
 
 // Yaha pr compound index create kiya gya ha
 accountSchema.index({user:1, status:1});
+
+// aggregation pipeline for ledger balance
+
+accountSchema.methods.getBalance = async function(){
+    const balanceData = await ledgerModel.aggregate([
+        {$match: {account: this._id}},
+        {
+            $group: {
+                _id: null,
+                totalDebit: {
+                    $sum: {
+                        $cond:[
+                            {$eq: ["$type", "DEBIT"]},
+                            "$amount",
+                            0
+                        ]
+                    }
+                },
+                totalCredit: {
+                    $sum: {
+                        $cond:[
+                            {$eq: ["$type", "CREDIT"]},
+                            "$amount",
+                            0
+                        ]
+                    }
+                }
+            }
+        },
+        {
+            $project: {
+                _id: 0,
+                balance: {
+                    $subtract: ["$totalCredit", "$totalDebit"]
+                }
+            } 
+        },
+    ])
+
+    // Handle no transaction found case
+    if(balanceData.length === 0){
+        return 0;
+    }
+    return balanceData[0].balance;
+}
 
 const accountModel = mongoose.model("account", accountSchema)
 
