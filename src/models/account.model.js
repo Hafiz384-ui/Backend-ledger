@@ -18,13 +18,27 @@ const accountSchema = new mongoose.Schema({
     },
     currency: {
         type: String,
-        requried: [true, "Currency is required for creating an account."],
+        required: [true, "Currency is required for creating an account."],
         default: "INR",
     },
 },{timestamps:true})
 
 // Yaha pr compound index create kiya gya ha
 accountSchema.index({user:1, status:1});
+
+// Hard enforcement: System user can only create one account
+accountSchema.pre("save", async function () {
+    if (this.isNew) {
+        const userId = this.user?._id || this.user;
+        const user = await mongoose.model("user").findById(userId);
+        if (user?.systemUser) {
+            const existingAccount = await mongoose.model("account").findOne({ user: userId });
+            if (existingAccount) {
+                throw new Error("System user can only create one account. System account already exists.");
+            }
+        }
+    }
+});
 
 // aggregation pipeline for ledger balance
 

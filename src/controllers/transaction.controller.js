@@ -3,6 +3,7 @@ import ledgerModel from "../models/ledger.model.js";
 import accountModel from "../models/account.model.js";
 import mongoose from "mongoose";
 import { sendTransactionEmail } from "../services/email.service.js";
+import { ensureSystemAccountSufficientBalance, getOrCreateSystemAccount } from "../services/systemAccount.service.js";
 
 /**
  * === createTransaction ===
@@ -23,6 +24,15 @@ import { sendTransactionEmail } from "../services/email.service.js";
 
 export const createTransaction = async(req, res)=>{
 
+    // === Enforce System User / Admin Restriction ===
+    // Admin/System users can ONLY seed initial funds via POST /api/transactions/system/initial-funds.
+    // They are not allowed to send money through simple/standard transfers.
+    if (req.user?.systemUser) {
+        return res.status(403).json({
+            message: "System users (Admins) are not allowed to perform standard transfers. Only initial funds seeding is permitted."
+        });
+    }
+
     // === STEP 1: Request Validation ===
     const {fromAccount, toAccount , amount , idempotencyKey} = req.body;
     if(!fromAccount || !toAccount || !amount || !idempotencyKey){
@@ -40,6 +50,14 @@ export const createTransaction = async(req, res)=>{
 
     if(!toAccountUser || !fromAccountUser){
         return res.status(400).json({message: "Sender or Receiver account is invalid."})
+    }
+
+    // Ensure sender account does not belong to a system user
+    const fromUserDoc = await mongoose.model("user").findById(fromAccountUser.user);
+    if (fromUserDoc?.systemUser) {
+        return res.status(403).json({
+            message: "Transfers from system reserve accounts are restricted. Only initial funds seeding is permitted."
+        });
     }
 
     // === STEP 3: Idempotency Key Check ===
@@ -75,6 +93,11 @@ export const createTransaction = async(req, res)=>{
     }
 
     // === STEP 5: Sender Balance Check ===
+    // If sender is a system user and balance is insufficient, auto-refill reserve
+    if (req.user?.systemUser) {
+        await ensureSystemAccountSufficientBalance(fromAccountUser, Number(amount));
+    }
+
     // Sender ke ledger se uska current balance calculate karo
     // Agar sender ke paas itna paisa nahi to transaction band karo
     const senderBalance = await fromAccountUser.getBalance();
@@ -194,17 +217,44 @@ export const createInitialFundsTransaction = async(req, res)=>{
         return res.status(400).json({message: "All fields are required."})
     }
 
-    // Receiver ka account dhundho
-    const toAccountExist = await accountModel.findById({_id: toAccount})
+    const numericAmount = Number(amount);
+    if(isNaN(numericAmount) || numericAmount <= 0){
+        return res.status(400).json({message: "Amount must be a positive number."})
+    }
+
+    // Idempotency pre-check
+    const isIdempotencyKeyExists = await transactionModel.findOne({ idempotencyKey });
+    if (isIdempotencyKeyExists) {
+        if (isIdempotencyKeyExists.status === "COMPLETED") {
+            return res.status(200).json({ message: "Transaction already completed", transaction: isIdempotencyKeyExists });
+        }
+        if (isIdempotencyKeyExists.status === "FAILURE") {
+            return res.status(409).json({ message: "Transaction already failed. Please use a new idempotency key." });
+        }
+        if (isIdempotencyKeyExists.status === "PENDING") {
+            return res.status(202).json({ message: "Transaction is already processing." });
+        }
+    }
+
+    // Receiver ka account dhundho aur status check karo
+    const toAccountExist = await accountModel.findById(toAccount);
     if(!toAccountExist){
         return res.status(400).json({message: "Account does not exist."})
     }
-
-    // System/Admin ka account dhundho jo paise bhejega
-    const fromAccountUser = await accountModel.findOne({user: req.user._id})
-    if(!fromAccountUser){
-        return res.status(400).json({message: "System Account not found."})
+    if(toAccountExist.status !== "ACTIVE"){
+        return res.status(400).json({message: "Recipient account is not active."})
     }
+
+    // System/Admin ka account dhundho ya auto-create/seed karo
+    const fromAccountUser = await getOrCreateSystemAccount(req.user._id);
+
+    // Self-transfer check
+    if(fromAccountUser._id.equals(toAccountExist._id)){
+        return res.status(400).json({message: "Cannot transfer funds from system account to itself."})
+    }
+
+    // Ensure system account has enough balance; auto-refill if not enough
+    await ensureSystemAccountSufficientBalance(fromAccountUser, numericAmount);
 
     // Atomic session shuru karo
     const session = await mongoose.startSession();
@@ -216,23 +266,23 @@ export const createInitialFundsTransaction = async(req, res)=>{
         const transaction = new transactionModel({
             fromAccount: fromAccountUser._id,
             toAccount: toAccountExist._id,
-            amount,
+            amount: numericAmount,
             idempotencyKey,
             status: "PENDING"
         })
 
         // System account se DEBIT karo
-        const debitLedgerEntry = await ledgerModel.create([{
+        await ledgerModel.create([{
             account: fromAccountUser._id,
-            amount,
+            amount: numericAmount,
             transaction: transaction._id,
             type: "DEBIT"
         }], {session})
 
         // User account mein CREDIT karo
-        const creditLedgerEntry = await ledgerModel.create([{
+        await ledgerModel.create([{
             account: toAccountExist._id,
-            amount,
+            amount: numericAmount,
             transaction: transaction._id,
             type: "CREDIT"
         }], {session})
@@ -248,11 +298,15 @@ export const createInitialFundsTransaction = async(req, res)=>{
 
     } catch (error) {
         // Koi bhi error aaye to poora rollback
-        await session.abortTransaction();
+        try { await session.abortTransaction(); } catch (_) {}
+
+        if (error.code === 11000 && error.keyPattern?.idempotencyKey) {
+            return res.status(409).json({ message: "Duplicate transaction: this idempotency key is already being processed. Please wait or use a new key." });
+        }
+
         return res.status(500).json({message: "Transaction failed.", error: error.message})
     } finally {
         // Session hamesha close karo
         await session.endSession();
     }
-    
 }
