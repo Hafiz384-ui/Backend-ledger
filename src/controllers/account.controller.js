@@ -1,5 +1,6 @@
 import accountModel from '../models/account.model.js'
 import { seedSystemAccountBalance, ensureSystemAccountSufficientBalance } from '../services/systemAccount.service.js'
+import { createAuditLog } from '../utils/logger.js'
 
 export const createAccountController = async (req, res) => {
     try {
@@ -22,11 +23,29 @@ export const createAccountController = async (req, res) => {
             // Automatically seed large initial reserve balance so system account balance is never negative
             await seedSystemAccountBalance(account._id);
 
+            await createAuditLog({
+                userId: user._id,
+                action: "ACCOUNT_CREATED",
+                targetResource: "account",
+                resourceId: account._id,
+                details: { systemAccount: true, status: account.status },
+                req
+            });
+
             return res.status(201).json({ message: "Account created successfully", account });
         }
 
         const account = await accountModel.create({
             user: user._id
+        });
+
+        await createAuditLog({
+            userId: user._id,
+            action: "ACCOUNT_CREATED",
+            targetResource: "account",
+            resourceId: account._id,
+            details: { systemAccount: false, status: account.status },
+            req
         });
 
         return res.status(201).json({ message: "Account created successfully", account });

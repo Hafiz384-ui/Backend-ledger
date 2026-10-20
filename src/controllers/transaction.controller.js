@@ -4,6 +4,7 @@ import accountModel from "../models/account.model.js";
 import mongoose from "mongoose";
 import { sendTransactionEmail } from "../services/email.service.js";
 import { ensureSystemAccountSufficientBalance, getOrCreateSystemAccount } from "../services/systemAccount.service.js";
+import { createAuditLog } from "../utils/logger.js";
 
 /**
  * === createTransaction ===
@@ -53,7 +54,7 @@ export const createTransaction = async(req, res)=>{
     }
 
     // Ensure sender account does not belong to a system user
-    const fromUserDoc = await mongoose.model("user").findById(fromAccountUser.user);
+    const fromUserDoc = await mongoose.model("user").findById(fromAccountUser.user).select("+systemUser");
     if (fromUserDoc?.systemUser) {
         return res.status(403).json({
             message: "Transfers from system reserve accounts are restricted. Only initial funds seeding is permitted."
@@ -153,6 +154,22 @@ export const createTransaction = async(req, res)=>{
             {session, new: true}
         )
 
+        // Record immutable audit log for money transfer
+        await createAuditLog({
+            userId: req.user._id,
+            action: "MONEY_TRANSFER",
+            targetResource: "transaction",
+            resourceId: completedTransaction._id,
+            details: {
+                fromAccount: fromAccountUser._id,
+                toAccount: toAccountUser._id,
+                amount,
+                idempotencyKey
+            },
+            req,
+            session
+        });
+
         // Session commit karo — ab sab kuch permanently save ho gaya DB mein
         await session.commitTransaction();
 
@@ -210,11 +227,15 @@ export const createTransaction = async(req, res)=>{
  */
 
 export const createInitialFundsTransaction = async(req, res)=>{
+    // Guard: Enforce System User privilege
+    if (!req.user || !req.user.systemUser) {
+        return res.status(403).json({ message: "Access denied: System User privileges required." });
+    }
 
     // Zaroori fields check karo
     const {toAccount , amount , idempotencyKey} = req.body;
     if(!toAccount || !amount || !idempotencyKey){
-        return res.status(400).json({message: "All fields are required."})
+        return res.status(400).json({message: "toAccount, amount, and idempotencyKey are required."})
     }
 
     const numericAmount = Number(amount);
@@ -245,7 +266,7 @@ export const createInitialFundsTransaction = async(req, res)=>{
         return res.status(400).json({message: "Recipient account is not active."})
     }
 
-    // System/Admin ka account dhundho ya auto-create/seed karo
+    // System/Admin ka account dhundho ya auto-create/seed karo (Central Treasury)
     const fromAccountUser = await getOrCreateSystemAccount(req.user._id);
 
     // Self-transfer check
@@ -253,7 +274,7 @@ export const createInitialFundsTransaction = async(req, res)=>{
         return res.status(400).json({message: "Cannot transfer funds from system account to itself."})
     }
 
-    // Ensure system account has enough balance; auto-refill if not enough
+    // Ensure system treasury reserve has sufficient balance (auto-refill if low)
     await ensureSystemAccountSufficientBalance(fromAccountUser, numericAmount);
 
     // Atomic session shuru karo
@@ -261,8 +282,7 @@ export const createInitialFundsTransaction = async(req, res)=>{
     session.startTransaction();
 
     try {
-        // Pehle transaction object banao (abhi save nahi kiya, sirf memory mein hai)
-        // Status baad mein COMPLETED karenge
+        // Pehle transaction object banao (status baad mein COMPLETED karenge)
         const transaction = new transactionModel({
             fromAccount: fromAccountUser._id,
             toAccount: toAccountExist._id,
@@ -290,6 +310,24 @@ export const createInitialFundsTransaction = async(req, res)=>{
         // Transaction status update karo aur DB mein save karo
         transaction.status = "COMPLETED"
         await transaction.save({session})
+
+        // Record immutable audit log for SYSTEM_INITIAL_FUNDS seeding
+        await createAuditLog({
+            userId: req.user._id,
+            action: "SYSTEM_INITIAL_FUNDS",
+            targetResource: "account",
+            resourceId: toAccountExist._id,
+            details: {
+                toAccount: toAccountExist._id,
+                fromAccount: fromAccountUser._id,
+                amount: numericAmount,
+                currency: toAccountExist.currency || "INR",
+                transactionId: transaction._id,
+                idempotencyKey
+            },
+            req,
+            session
+        });
 
         // Sab theek raha — commit karo
         await session.commitTransaction();

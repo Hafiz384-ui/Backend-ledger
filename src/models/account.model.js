@@ -30,7 +30,7 @@ accountSchema.index({user:1, status:1});
 accountSchema.pre("save", async function () {
     if (this.isNew) {
         const userId = this.user?._id || this.user;
-        const user = await mongoose.model("user").findById(userId);
+        const user = await mongoose.model("user").findById(userId).select("+systemUser");
         if (user?.systemUser) {
             const existingAccount = await mongoose.model("account").findOne({ user: userId });
             if (existingAccount) {

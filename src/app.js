@@ -4,6 +4,9 @@ import cors from 'cors';
 
 const app = express();
 
+// Trust reverse proxies to extract real client IP in req.ip and x-forwarded-for
+app.set('trust proxy', true);
+
 const allowedOrigins = [
     'http://localhost:3000',
     'http://127.0.0.1:3000',
@@ -35,6 +38,7 @@ app.use(express.urlencoded({ extended: true }))
 import authRouter from './routes/auth.routes.js'
 import accountRouter from './routes/account.routes.js'
 import transactionRouter from './routes/transaction.routes.js'
+import auditLogRouter from './routes/auditLog.routes.js'
 
 /**
  *  Start using Routes from here
@@ -42,6 +46,7 @@ import transactionRouter from './routes/transaction.routes.js'
 app.use('/api/auth', authRouter)
 app.use('/api/accounts', accountRouter)
 app.use('/api/transactions', transactionRouter)
+app.use('/api/audit-logs', auditLogRouter)
 
 app.get("/test", (req, res) => {
     return res.json({ message: "Hello World" });
