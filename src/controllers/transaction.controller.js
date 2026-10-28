@@ -6,6 +6,9 @@ import { sendTransactionEmail } from "../services/email.service.js";
 import { ensureSystemAccountSufficientBalance, getOrCreateSystemAccount } from "../services/systemAccount.service.js";
 import { createAuditLog } from "../utils/logger.js";
 
+// Strict positive amount regex: must start with digits 1-9, optional decimals, cannot start with 0
+const VALID_AMOUNT_REGEX = /^[1-9]\d*(\.\d+)?$/;
+
 /**
  * === createTransaction ===
  * Ye function ek naya transaction create karta hai.
@@ -40,6 +43,21 @@ export const createTransaction = async(req, res)=>{
         return res.status(400).json({message: "All fields are required."})
     }
 
+    // Strict Amount Validation: Cannot start with 0 (e.g. 084787 is rejected) and must be at least 1
+    const amountStr = String(amount).trim();
+    if (!VALID_AMOUNT_REGEX.test(amountStr)) {
+        return res.status(400).json({
+            message: "Invalid amount. Amount must start with 1 or greater and cannot start with 0."
+        });
+    }
+
+    const numericAmount = Number(amountStr);
+    if (isNaN(numericAmount) || numericAmount < 1) {
+        return res.status(400).json({
+            message: "Amount must be at least 1."
+        });
+    }
+
     // === STEP 2: Accounts DB se Fetch karo ===
     let fromAccountUser, toAccountUser;
     try {
@@ -51,6 +69,13 @@ export const createTransaction = async(req, res)=>{
 
     if(!toAccountUser || !fromAccountUser){
         return res.status(400).json({message: "Sender or Receiver account is invalid."})
+    }
+
+    // Ensure sender owns the source account (prevent unauthorized transfers from other users' accounts)
+    if (fromAccountUser.user.toString() !== req.user._id.toString()) {
+        return res.status(403).json({
+            message: "Unauthorized: You do not own the source account."
+        });
     }
 
     // Ensure sender account does not belong to a system user
@@ -96,14 +121,14 @@ export const createTransaction = async(req, res)=>{
     // === STEP 5: Sender Balance Check ===
     // If sender is a system user and balance is insufficient, auto-refill reserve
     if (req.user?.systemUser) {
-        await ensureSystemAccountSufficientBalance(fromAccountUser, Number(amount));
+        await ensureSystemAccountSufficientBalance(fromAccountUser, numericAmount);
     }
 
     // Sender ke ledger se uska current balance calculate karo
     // Agar sender ke paas itna paisa nahi to transaction band karo
     const senderBalance = await fromAccountUser.getBalance();
-    if(senderBalance < Number(amount)){
-        return res.status(400).json({message: `Sender has Insufficient Balance, Requested balance is ${amount} but available balance is ${senderBalance}`})
+    if(senderBalance < numericAmount){
+        return res.status(400).json({message: `Sender has Insufficient Balance, Requested balance is ${numericAmount} but available balance is ${senderBalance}`})
     }
 
     // === STEP 6: MongoDB Session Shuru Karo ===
@@ -120,7 +145,7 @@ export const createTransaction = async(req, res)=>{
         const transaction = await transactionModel.create([{
             fromAccount: fromAccountUser._id,
             toAccount: toAccountUser._id,
-            amount,
+            amount: numericAmount,
             idempotencyKey,
             status: "PENDING"
         }], {session})
@@ -131,7 +156,7 @@ export const createTransaction = async(req, res)=>{
         // Sender ke account se paisa kata — ledger mein DEBIT darj karo
         await ledgerModel.create([{
             account: fromAccountUser._id,
-            amount,
+            amount: numericAmount,
             transaction: createdTransaction._id,
             type: "DEBIT"
         }], {session})
@@ -140,7 +165,7 @@ export const createTransaction = async(req, res)=>{
         // Receiver ke account mein paisa aaya — ledger mein CREDIT darj karo
         await ledgerModel.create([{
             account: toAccountUser._id,
-            amount,
+            amount: numericAmount,
             transaction: createdTransaction._id,
             type: "CREDIT"
         }], {session})
@@ -163,7 +188,7 @@ export const createTransaction = async(req, res)=>{
             details: {
                 fromAccount: fromAccountUser._id,
                 toAccount: toAccountUser._id,
-                amount,
+                amount: numericAmount,
                 idempotencyKey
             },
             req,
@@ -176,7 +201,7 @@ export const createTransaction = async(req, res)=>{
         // Email bhejna try karo — agar fail bhi ho to transaction rollback nahi hogi
         // Email ek secondary kaam hai, transaction ki success uski wajah se affect nahi honi chahiye
         try {
-            await sendTransactionEmail(req.user.email, req.user.name, amount, toAccountUser)
+            await sendTransactionEmail(req.user.email, req.user.name, numericAmount, toAccountUser)
         } catch (emailError) {
             console.error("Transaction email failed (non-critical):", emailError.message)
         }
@@ -238,9 +263,17 @@ export const createInitialFundsTransaction = async(req, res)=>{
         return res.status(400).json({message: "toAccount, amount, and idempotencyKey are required."})
     }
 
-    const numericAmount = Number(amount);
-    if(isNaN(numericAmount) || numericAmount <= 0){
-        return res.status(400).json({message: "Amount must be a positive number."})
+    // Strict Amount Validation: Cannot start with 0 (e.g. 084787 is rejected) and must be at least 1
+    const amountStr = String(amount).trim();
+    if (!VALID_AMOUNT_REGEX.test(amountStr)) {
+        return res.status(400).json({
+            message: "Invalid amount. Amount must start with 1 or greater and cannot start with 0."
+        });
+    }
+
+    const numericAmount = Number(amountStr);
+    if(isNaN(numericAmount) || numericAmount < 1){
+        return res.status(400).json({message: "Amount must be a positive number starting from 1 or greater."})
     }
 
     // Idempotency pre-check
@@ -348,3 +381,128 @@ export const createInitialFundsTransaction = async(req, res)=>{
         await session.endSession();
     }
 }
+
+/**
+ * === getTransactions ===
+ * Retrieves paginated transactions for the authenticated user.
+ * - System Users can view global transactions with ?all=true or their system operations.
+ * - Regular customers can ONLY see transactions where their accounts are involved (fromAccount or toAccount).
+ * - Correctly marks direction:
+ *     - "SENT" (Debit) on sender's side
+ *     - "RECEIVED" (Credit) on receiver's side
+ *     - "SELF" for transfers between user's own accounts
+ */
+export const getTransactions = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        const isSystemUser = Boolean(req.user.systemUser);
+
+        // Fetch all accounts owned by the requesting user
+        const userAccounts = await accountModel.find({ user: userId }).select("_id");
+        const userAccountIds = userAccounts.map((a) => a._id.toString());
+
+        const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+        const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+        const skip = (page - 1) * limit;
+
+        let query = {};
+
+        // If specific account requested
+        if (req.query.accountId) {
+            const requestedAccountId = req.query.accountId;
+            // Ensure regular user owns this account
+            if (!isSystemUser && !userAccountIds.includes(requestedAccountId)) {
+                return res.status(403).json({ message: "Access denied to requested account transactions." });
+            }
+            query = {
+                $or: [
+                    { fromAccount: requestedAccountId },
+                    { toAccount: requestedAccountId }
+                ]
+            };
+        } else if (isSystemUser && req.query.all === "true") {
+            // System admin viewing global transactions
+            query = {};
+        } else {
+            // Default: All transactions involving ANY of the user's accounts
+            query = {
+                $or: [
+                    { fromAccount: { $in: userAccountIds } },
+                    { toAccount: { $in: userAccountIds } }
+                ]
+            };
+        }
+
+        // Optional filter: status
+        if (req.query.status) {
+            query.status = req.query.status;
+        }
+
+        const [transactions, total] = await Promise.all([
+            transactionModel.find(query)
+                .populate({
+                    path: "fromAccount",
+                    select: "_id status currency user",
+                    populate: { path: "user", select: "username email" }
+                })
+                .populate({
+                    path: "toAccount",
+                    select: "_id status currency user",
+                    populate: { path: "user", select: "username email" }
+                })
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(limit)
+                .lean(),
+            transactionModel.countDocuments(query)
+        ]);
+
+        // Annotate each transaction with direction relative to requesting user
+        const enrichedTransactions = transactions.map((tx) => {
+            const fromId = tx.fromAccount?._id?.toString() || tx.fromAccount?.toString();
+            const toId = tx.toAccount?._id?.toString() || tx.toAccount?.toString();
+
+            const isFromMyAccount = userAccountIds.includes(fromId);
+            const isToMyAccount = userAccountIds.includes(toId);
+
+            let direction = "TRANSFER";
+            if (isFromMyAccount && isToMyAccount) {
+                direction = "SELF";
+            } else if (isFromMyAccount) {
+                direction = "SENT"; // DEBIT / Outgoing (-amount)
+            } else if (isToMyAccount) {
+                direction = "RECEIVED"; // CREDIT / Incoming (+amount)
+            } else if (isSystemUser) {
+                direction = "SYSTEM_AUDIT";
+            }
+
+            return {
+                ...tx,
+                direction,
+                isSender: isFromMyAccount,
+                isReceiver: isToMyAccount
+            };
+        });
+
+        const totalPages = Math.ceil(total / limit) || 1;
+
+        return res.status(200).json({
+            success: true,
+            transactions: enrichedTransactions,
+            pagination: {
+                total,
+                page,
+                limit,
+                totalPages,
+                hasNextPage: page < totalPages,
+                hasPrevPage: page > 1
+            }
+        });
+    } catch (error) {
+        return res.status(500).json({
+            success: false,
+            message: "Failed to fetch transactions",
+            error: error.message
+        });
+    }
+};

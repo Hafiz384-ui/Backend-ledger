@@ -11,7 +11,27 @@ const ledgerSchema = new mongoose.Schema({
     amount:{
         type: Number,
         required: [true, "Amount is required for creating ledger."],
-        immutable: true
+        immutable: true,
+        min: [1, "Amount must be at least 1."],
+        validate: {
+            validator: function(val) {
+                return typeof val === "number" && !isNaN(val) && val >= 1;
+            },
+            message: "Amount must be a valid number starting from 1 or greater."
+        },
+        set: function(val) {
+            if (typeof val === "string") {
+                const trimmed = val.trim();
+                if (trimmed.startsWith("0") || !/^[1-9]\d*(\.\d+)?$/.test(trimmed)) {
+                    throw new Error("Amount must start with 1 or greater and cannot start with 0.");
+                }
+            } else if (typeof val === "number") {
+                if (isNaN(val) || val < 1) {
+                    throw new Error("Amount must be at least 1.");
+                }
+            }
+            return val;
+        }
     },
     transaction: {
         type: mongoose.Schema.Types.ObjectId,

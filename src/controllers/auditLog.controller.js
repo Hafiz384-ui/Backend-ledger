@@ -34,6 +34,7 @@ export const getMyAuditLogs = async (req, res) => {
 
         const [logs, total] = await Promise.all([
             AuditLog.find(query)
+                .populate("user", "username email")
                 .sort({ createdAt: -1 })
                 .skip(skip)
                 .limit(limit)
