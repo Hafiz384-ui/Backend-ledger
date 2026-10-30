@@ -1,8 +1,15 @@
 import express from 'express'
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
+import connectionDB from './config/db.js';
 
 const app = express();
+
+// Middleware to ensure DB connection is active for each serverless invocation
+app.use(async (req, res, next) => {
+    await connectionDB();
+    next();
+});
 
 // Trust reverse proxies to extract real client IP in req.ip and x-forwarded-for
 app.set('trust proxy', true);
@@ -15,7 +22,7 @@ const allowedOrigins = [
 
 app.use(cors({
     origin: function (origin, callback) {
-        if (!origin || allowedOrigins.includes(origin)) {
+        if (!origin || allowedOrigins.includes(origin) || (origin && origin.endsWith('.vercel.app'))) {
             callback(null, true);
         } else {
             callback(new Error('Blocked by CORS'));
