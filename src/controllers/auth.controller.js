@@ -1,7 +1,7 @@
 import User from "../models/user.model.js";
 import generateToken from "../utils/generateToken.js";
 import bcrypt from "bcryptjs";
-import sendRegistrationEmail from "../services/email.service.js";
+import sendRegistrationEmail, { sendLoginAlertEmail } from "../services/email.service.js";
 import TokenBlacklistModel from "../models/blackList.model.js";
 import { createAuditLog } from "../utils/logger.js";
 import jwt from "jsonwebtoken";
@@ -98,6 +98,18 @@ export const loginUser = async (req, res) => {
                 systemUser: Boolean(user.systemUser)
             },
             req
+        });
+
+        // Trigger secure login notification email asynchronously (does not block client response)
+        const ip = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket?.remoteAddress || req.ip || "Unknown IP";
+        const device = req.headers["user-agent"] || "Unknown Device / Browser";
+
+        sendLoginAlertEmail(user.email, user.username, {
+            time: new Date().toLocaleString(),
+            ip,
+            device
+        }).catch((emailErr) => {
+            console.warn("Login notification email delivery warning:", emailErr?.message || emailErr);
         });
 
         return res.status(200).json({ message: "User logged in successfully", user, token });

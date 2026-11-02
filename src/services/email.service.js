@@ -53,13 +53,81 @@ const sendMail = async (to, subject, text, html) => {
             text,
             html,
         });
+        return info;
     } catch (error) {
         console.log("Error sending message", error);
+        throw error;
     }
 };
 
 // ── Email templates ──────────────────────────────────────────────────────────
-async function sendRegistrationEmail(useremail, name) {
+export async function sendLoginAlertEmail(userEmail, name, loginDetails = {}) {
+    const timeString = loginDetails.time || new Date().toLocaleString("en-US", { timeZone: "Asia/Karachi" });
+    const ipAddress = loginDetails.ip || "Unknown IP";
+    const userAgent = loginDetails.device || "Unknown Browser / Device";
+
+    const subject = `Security Notification: Successful Sign-in to Your Account`;
+    const text = `Dear ${name},
+
+A successful sign-in to your banking system account was detected.
+
+Session Details:
+- Date & Time: ${timeString}
+- IP Address: ${ipAddress}
+- Device: ${userAgent}
+
+If you made this login, no action is needed.
+If this was NOT you, please secure your account immediately or contact support.
+
+Best regards,
+Banking System Team`;
+
+    const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+        <div style="border-bottom: 2px solid #10b981; padding-bottom: 16px; margin-bottom: 20px;">
+            <h2 style="color: #0f172a; margin: 0; font-size: 22px;">AURA Banking System</h2>
+            <p style="color: #64748b; margin: 4px 0 0 0; font-size: 13px;">Security Notification & Access Verification</p>
+        </div>
+
+        <h3 style="color: #0f172a; font-size: 18px; margin-top: 0;">New Account Sign-in Detected</h3>
+        <p style="color: #334155; font-size: 15px; line-height: 1.6;">Dear <strong>${name}</strong>,</p>
+        <p style="color: #334155; font-size: 14px; line-height: 1.6;">
+            A successful login to your banking account was registered. Below are the details of the active session:
+        </p>
+
+        <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin: 20px 0;">
+            <table style="width: 100%; border-collapse: collapse; font-size: 14px; color: #334155;">
+                <tr>
+                    <td style="padding: 6px 0; font-weight: 600; width: 35%;">Date & Time:</td>
+                    <td style="padding: 6px 0; color: #0f172a;">${timeString}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 6px 0; font-weight: 600;">IP Address:</td>
+                    <td style="padding: 6px 0; color: #0f172a;">${ipAddress}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 6px 0; font-weight: 600;">Device / Browser:</td>
+                    <td style="padding: 6px 0; color: #0f172a;">${userAgent}</td>
+                </tr>
+            </table>
+        </div>
+
+        <div style="background-color: #fef2f2; border-left: 4px solid #ef4444; padding: 12px 16px; border-radius: 4px; margin-bottom: 24px;">
+            <p style="color: #991b1b; font-size: 13px; margin: 0; line-height: 1.5;">
+                <strong>Did not perform this login?</strong> If you do not recognize this sign-in activity, please secure your account immediately by resetting your password.
+            </p>
+        </div>
+
+        <p style="color: #64748b; font-size: 12px; border-top: 1px solid #f1f5f9; padding-top: 16px; margin-top: 24px;">
+            This is an automated system notification from the AURA Spatial Financial Banking System. Please do not reply directly to this email.
+        </p>
+    </div>
+    `;
+
+    await sendMail(userEmail, subject, text, html);
+}
+
+export async function sendRegistrationEmail(useremail, name) {
     const subject = `Welcome to our platform, ${name}`;
     const text = `Welcome to our platform, ${name}. You can now login to your account and explore all the features our platform has to offer.`;
     const html = `
@@ -73,17 +141,17 @@ async function sendRegistrationEmail(useremail, name) {
     await sendMail(useremail, subject, text, html);
 }
 
-export const sendTransactionEmail = async (userEmail,name, amount, toAccount)=>{
-    const subject = "Transaction successfull"
+export const sendTransactionEmail = async (userEmail, name, amount, toAccount, transaction = {}) => {
+    const subject = "Transaction successfull";
     const text = `
     Dear ${name},
 
     This is confirmation that your transaction of ${amount} to account ${toAccount} has been successfully processed.
 
-    Transaction ID: ${transaction.id}
-    Date: ${transaction.date}
-    Amount: ${transaction.amount}
-    Status: ${transaction.status}
+    Transaction ID: ${transaction?.id || "N/A"}
+    Date: ${transaction?.date || new Date().toLocaleString()}
+    Amount: ${amount}
+    Status: ${transaction?.status || "COMPLETED"}
 
     If you did not authorize this transaction, please contact our support team immediately.
 
@@ -94,15 +162,15 @@ export const sendTransactionEmail = async (userEmail,name, amount, toAccount)=>{
     <h1>Transaction Confirmation</h1>
     <p>Dear ${name},</p>
     <p>This is confirmation that your transaction of ${amount} to account ${toAccount} has been successfully processed.</p>
-    <p>Transaction ID: ${transaction.id}</p>
-    <p>Date: ${transaction.date}</p>
-    <p>Amount: ${transaction.amount}</p>
-    <p>Status: ${transaction.status}</p>
+    <p>Transaction ID: ${transaction?.id || "N/A"}</p>
+    <p>Date: ${transaction?.date || new Date().toLocaleString()}</p>
+    <p>Amount: ${amount}</p>
+    <p>Status: ${transaction?.status || "COMPLETED"}</p>
     <p>If you did not authorize this transaction, please contact our support team immediately.</p>
     <p>Thank you,</p>
     <p>The Banking System Team</p>
     `;
     await sendMail(userEmail, subject, text, html);
-}
+};
 
 export default sendRegistrationEmail;
